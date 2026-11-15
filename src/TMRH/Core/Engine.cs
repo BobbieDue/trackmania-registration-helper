@@ -13,7 +13,8 @@ namespace Tmrh.Core
         ChangedSince,   // backup saved, but something changed the settings since Enable
         Interrupted,    // Enable or Disable stopped part-way (crash, power cut): restore is ready
         Managed,        // an organisation's policy controls these settings
-        BadBackup       // the saved settings file failed validation: nothing is restored from it
+        BadBackup,      // the saved settings file failed validation: nothing is restored from it
+        LegacyStuck     // an older test build's saved copy exists but couldn't be moved: nothing may change until it is
     }
 
     /// <summary>A setting that no longer has the value Registration Mode gave it.</summary>
@@ -105,6 +106,7 @@ namespace Tmrh.Core
             var s = new Status { Tls13Available = Tls13Available, Managed = Settings.Managed(reg) };
             try { s.Backup = store.Load(); }
             catch (InvalidDataException ex) { s.Mode = Mode.BadBackup; s.BackupProblems = BackupInvalid.Problems(ex); return s; }
+            catch (LegacyBackupException ex) { s.Mode = Mode.LegacyStuck; s.BackupProblems = LegacyHelp(ex); return s; }
             if (s.Backup != null && s.Backup.Stage == Stage.Restored) { store.Retire(); s.Backup = null; }   // restored earlier; only the archiving was left
             var now = Settings.Touched(reg).ToList();
             if (s.Backup != null && s.Backup.Stage != Stage.Applied) s.Mode = Mode.Interrupted;
@@ -124,12 +126,13 @@ namespace Tmrh.Core
             Backup backup;
             try { backup = store.Load(); }
             catch (InvalidDataException ex) { return Result.Fail("Your saved settings file is damaged, so nothing was changed. It has been left as it is. Use the recovery options to deal with it first.", BackupInvalid.Problems(ex)); }
+            catch (LegacyBackupException ex) { return Result.Fail(ex.Message, LegacyHelp(ex)); }
             if (backup != null && backup.Stage == Stage.Restored) backup = null;   // already restored: start a fresh copy
             var now = Settings.Touched(reg).ToList();
             if (backup == null)
             {
                 progress("Saving your current settings...");
-                backup = new Backup { Stage = Stage.Applying, Created = DateTime.UtcNow, User = Environment.UserDomainName + "\\" + Environment.UserName, Originals = now };
+                backup = new Backup { Stage = Stage.Applying, Created = DateTime.UtcNow, User = Environment.UserDomainName + "\\" + Environment.UserName, Sid = store.CurrentSid, Originals = now };
                 store.Save(backup);
             }
             else
@@ -177,6 +180,7 @@ namespace Tmrh.Core
             {
                 return Result.Fail("Your saved settings file failed its safety check, so nothing was restored and nothing was changed. The file has been kept as it is.", BackupInvalid.Problems(ex));
             }
+            catch (LegacyBackupException ex) { return Result.Fail(ex.Message, LegacyHelp(ex)); }
             if (backup == null || backup.Stage == Stage.Restored)
                 return Result.Fail("There are no saved settings to restore, so nothing was changed. (Registration Mode was not turned on by this tool on this Windows account.)");
 
@@ -230,6 +234,17 @@ namespace Tmrh.Core
             var wrong = want.Where(v => !reg.Read(v.Hive, v.Path, v.Name).SameAs(v)).Select(v => Friendly(v) + ": wanted " + v.Describe() + ", found " + reg.Read(v.Hive, v.Path, v.Name).Describe()).ToList();
             if (wrong.Count > 0) return Result.Fail("Some settings didn't change as expected.", wrong);
             return new Result { Ok = true, Message = "The three settings are back to Windows' secure positions." };
+        }
+
+        public static List<string> LegacyHelp(LegacyBackupException ex)
+        {
+            return new List<string>
+            {
+                "The older saved copy is here (left exactly as it was): " + ex.OldFile,
+                "This version keeps it here: " + ex.NewFile,
+                "Close anything that might be using it (an antivirus scan, an editor), then open this tool again. Or move the file to the new place yourself.",
+                "Until then this tool won't turn Registration Mode on or off, so your genuine original settings can't be lost.",
+            };
         }
 
         void Step(string what) { if (StepHook != null) StepHook(what); }

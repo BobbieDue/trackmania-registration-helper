@@ -142,6 +142,7 @@ namespace Tmrh.UI
             {
                 case Mode.On: SetStatus("\u25CF", "Registration Mode is ON", "Start TrackMania and create your account, then come back and turn it OFF.", Palette.Blue, Palette.White, Palette.BlueDark); enableBtn.Enabled = false; disableBtn.Enabled = true; break;
                 case Mode.Interrupted: SetStatus("\u25B2", "Last change didn't finish", "Windows or this tool stopped part-way. Click Disable to put your original settings back.", Palette.OrangeLight, Palette.Text, Palette.Orange); enableBtn.Enabled = false; disableBtn.Enabled = true; break;
+                case Mode.LegacyStuck: SetStatus("\u25B2", "Older saved settings need moving", "Your original settings were saved by an older test version and couldn't be moved. Nothing will change until that's sorted. Click Disable for details.", Palette.OrangeLight, Palette.Text, Palette.Orange); enableBtn.Enabled = false; disableBtn.Enabled = true; break;
                 case Mode.BadBackup: SetStatus("\u25B2", "Saved settings file is damaged", "It failed its safety check, so nothing will be restored from it. Click Disable to see your options.", Palette.OrangeLight, Palette.Text, Palette.Orange); enableBtn.Enabled = false; disableBtn.Enabled = true; break;
                 default: SetStatus("\u25CB", "Registration Mode is OFF", "Your normal Windows settings are in place.", Palette.GreyLight, Palette.Text, Palette.Grey); enableBtn.Enabled = true; disableBtn.Enabled = false; break;
             }
@@ -176,11 +177,14 @@ namespace Tmrh.UI
                     SetStatus("▲", "Last change didn't finish", "Windows or this tool stopped part-way. Click Disable to put your original settings back.", Palette.OrangeLight, Palette.Text, Palette.Orange); break;
                 case Mode.Managed:
                     SetStatus("▲", "Controlled by your organisation", "A policy on this PC controls these settings, so this tool can't change them.", Palette.OrangeLight, Palette.Text, Palette.Orange); break;
+                case Mode.LegacyStuck:
+                    SetStatus("\u25B2", "Older saved settings need moving", "Your original settings were saved by an older test version and couldn't be moved. Nothing will change until that's sorted. Click Disable for details.", Palette.OrangeLight, Palette.Text, Palette.Orange); break;
                 case Mode.BadBackup:
                     SetStatus("\u25B2", "Saved settings file is damaged", "It failed its safety check, so nothing will be restored from it. Click Disable to see your options.", Palette.OrangeLight, Palette.Text, Palette.Orange); break;
             }
             enableBtn.Enabled = !busy && (s.Mode == Mode.Off || s.Mode == Mode.ChangedSince);
-            disableBtn.Enabled = !busy && (s.Backup != null || s.Mode == Mode.BadBackup);
+            disableBtn.Enabled = !busy && (s.Backup != null || s.Mode == Mode.BadBackup || s.Mode == Mode.LegacyStuck);
+            if (offerRecovery && s.Mode == Mode.LegacyStuck) { BeginInvoke(new Action(LegacyInfo)); return; }
             if (offerRecovery && s.Mode == Mode.BadBackup) { BeginInvoke(new Action(Recovery)); return; }
             if (offerRecovery && s.Mode == Mode.Interrupted &&
                 MessageBox.Show(this, "The last change to Registration Mode didn't finish (for example Windows restarted part-way).\n\nPut your original settings back now?",
@@ -192,6 +196,7 @@ namespace Tmrh.UI
         {
             if (busy) return;
             if (!enable && last != null && last.Mode == Mode.BadBackup) { Recovery(); return; }
+            if (last != null && last.Mode == Mode.LegacyStuck) { LegacyInfo(); return; }
             if (enable && !skipConfirm)
             {
                 var msg = "Registration Mode changes these Windows Internet Options settings for your Windows account only:\n\n" +
@@ -234,6 +239,15 @@ namespace Tmrh.UI
             if (r.Housekeeping.Count > 0)   // separate from the result: the settings themselves are fine
                 MessageBox.Show(this, "Your settings were restored correctly. One tidy-up step didn't work:\n\n" + string.Join("\n", r.Housekeeping.Select(d => "• " + d)),
                     Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        /// <summary>An older test build's saved copy couldn't be moved. Explain where it is; change nothing.</summary>
+        void LegacyInfo()
+        {
+            var lines = last != null ? last.BackupProblems : new List<string>();
+            MessageBox.Show(this, "Your original settings were saved by an older test version of this tool, and that saved copy couldn't be moved to where this version keeps it. Nothing has been changed.\n\n" +
+                string.Join("\n\n", lines.Select(l => "• " + l)), Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            RefreshStatus(false);
         }
 
         /// <summary>

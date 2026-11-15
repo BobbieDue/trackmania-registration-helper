@@ -20,8 +20,10 @@ namespace Tmrh
             using (var only = InstanceLock.TryAcquire(InstanceLock.DefaultName))
             {
                 if (!only.Acquired) { ShowOtherCopy(); return; }
-                try { BackupStore.MoveFromOldFolder(); } catch { }
-                var engine = new Engine(new WindowsRegistryStore(), new BackupStore(BackupStore.DefaultDirectory), new WinInetNotifier(), WindowsBuild);
+                // An older test build's saved copy is moved in when first needed; if that fails the window says so and nothing changes.
+                Func<string> sid = () => { try { return BackupStore.WindowsSid(); } catch { return null; } };
+                var store = new BackupStore(BackupStore.DefaultDirectory, BackupStore.DefaultLegacyFile, sid);
+                var engine = new Engine(new WindowsRegistryStore(), store, new WinInetNotifier(), WindowsBuild);
                 Application.Run(new UI.MainForm(engine));
             }
         }
@@ -55,7 +57,7 @@ namespace Tmrh
             foreach (var scale in new[] { 1F, 1.5F })
             {
                 UI.Theme.FontScale = scale;
-                foreach (var mode in new[] { Mode.Off, Mode.On, Mode.Interrupted, Mode.BadBackup })
+                foreach (var mode in new[] { Mode.Off, Mode.On, Mode.Interrupted, Mode.BadBackup, Mode.LegacyStuck })
                 {
                     using (var f = new UI.MainForm(engine) { StartPosition = FormStartPosition.Manual, Location = new System.Drawing.Point(0, 0), ShowInTaskbar = false })
                     {
