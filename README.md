@@ -83,9 +83,9 @@ The program is `out\TrackMania-Registration-Helper.exe`. It targets .NET Framewo
 (supported versions) and Windows 11. The tests include turning it on and off on the real registry; that part only
 runs when `TMUF_E2E=1` is set (the GitHub build machines set it), so running the tests won't change your PC.
 
-To publish a new version: update `CHANGELOG.md`, then push an annotated tag, e.g.
-`git tag -a v1.2.0 -m "What changed"` and `git push origin v1.2.0`. The tag message becomes the release notes, and the
-We Are C®AżΨ website picks up the new release automatically.
+To publish a new version: raise `<Version>` in `src/TMRH/TMRH.csproj`, add a `## <version>` section to
+`CHANGELOG.md`, and push to `main`. The build publishes the release (tag `v<version>`) with that changelog section as
+its notes, and the We Are C®AżΨ website picks it up within 30 minutes.
 
 ## Source layout
 

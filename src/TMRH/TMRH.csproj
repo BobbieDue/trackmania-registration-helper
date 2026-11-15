@@ -8,7 +8,7 @@
     <AssemblyName>TrackMania-Registration-Helper</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Product>TrackMania Registration Helper (TMRH)</Product>
     <Company>We Are Crazy TrackMania community</Company>
     <Description>Temporarily adjusts Internet Options so the old TrackMania Nations Forever / United Forever account registration works, then restores your original settings.</Description>

@@ -1,11 +1,11 @@
 name: Build
 
 # Every push: build and test on two versions of Windows.
-# A version tag (v1.2.3): also publish a GitHub release with the exe and its SHA-256.
+# On main, when <Version> in src/TMRH/TMRH.csproj hasn't been released yet, publish a GitHub release
+# (tag v<Version>) with the exe and its SHA-256, using that version's section of CHANGELOG.md as the notes.
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -24,17 +24,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Version
-        id: v
-        shell: bash
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT; else echo "version=0.0.0-dev" >> $GITHUB_OUTPUT; fi
       - name: Test (including turning it on and off on this machine's real registry)
         run: dotnet test tests/TMRH.Tests -c Release --logger "console;verbosity=normal"
         env:
           TMUF_E2E: '1'
       - name: Build
-        run: dotnet build src/TMRH -c Release -o out -p:Version=${{ steps.v.outputs.version }}
+        run: dotnet build src/TMRH -c Release -o out
       - name: Screenshots (layout check at normal and large text)
         shell: pwsh
         run: |
@@ -58,7 +53,7 @@ jobs:
           path: shots/*.png
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -74,13 +69,16 @@ jobs:
         run: |
           cat art/TMRH-windows-2022/SHA256SUMS.txt art/TMRH-windows-2025/SHA256SUMS.txt
           cmp art/TMRH-windows-2022/TrackMania-Registration-Helper.exe art/TMRH-windows-2025/TrackMania-Registration-Helper.exe
-      - name: Publish the release
+      - name: Publish the release (only for a version not released yet)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          git tag -l --format='%(contents)' "$TAG" > notes.txt
-          [ -s notes.txt ] || echo "TrackMania Registration Helper $TAG" > notes.txt
+          VER=$(grep -oP '(?<=<Version>)[^<]+' src/TMRH/TMRH.csproj)
+          TAG="v$VER"
+          if gh release view "$TAG" >/dev/null 2>&1; then echo "$TAG is already released"; exit 0; fi
+          awk -v v="## $VER" '$0==v{f=1;next} /^## /{f=0} f' CHANGELOG.md | sed '/^[[:space:]]*$/d' > notes.txt
+          [ -s notes.txt ] || echo "TrackMania Registration Helper $VER" > notes.txt
           printf '\n\nSHA-256: `%s`\n' "$(cut -d' ' -f1 art/TMRH-windows-2025/SHA256SUMS.txt)" >> notes.txt
+          cat notes.txt
           gh release create "$TAG" art/TMRH-windows-2025/TrackMania-Registration-Helper.exe art/TMRH-windows-2025/SHA256SUMS.txt \
-            --title "TMRH ${TAG#v}" --notes-file notes.txt
+            --target "$GITHUB_SHA" --title "TMRH $VER" --notes-file notes.txt
