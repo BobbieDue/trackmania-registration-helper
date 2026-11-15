@@ -14,6 +14,20 @@ namespace Tmrh.Core
     /// The saved settings file failed validation: an InvalidDataException carrying the list of problems found.
     /// Nothing has been restored from it and the file is left as it is.
     /// </summary>
+    /// <summary>
+    /// A saved copy from the old test builds ("TMUF Registration Mode") exists but couldn't be moved to the current folder.
+    /// The tool must not carry on as if there were no saved copy: it would save already-changed settings as the "originals".
+    /// The old file is left exactly where it is.
+    /// </summary>
+    public sealed class LegacyBackupException : IOException
+    {
+        public string OldFile { get; private set; }
+        public string NewFile { get; private set; }
+        public LegacyBackupException(string oldFile, string newFile, Exception why)
+            : base("Your original settings were saved by an older test version of this tool, and that saved copy couldn't be moved to where this version keeps it (" + why.Message + "). Nothing has been changed.", why)
+        { OldFile = oldFile; NewFile = newFile; }
+    }
+
     public static class BackupInvalid
     {
         const string Key = "TMRH.Problems";
@@ -37,7 +51,10 @@ namespace Tmrh.Core
         public int Version { get; set; }
         public Stage Stage { get; set; }
         public DateTime Created { get; set; }
+        /// <summary>Descriptive only: the account name when it was saved (account names can change).</summary>
         public string User { get; set; }
+        /// <summary>The Windows account (SID) the settings belong to. Written by v1.2.1 and later; older files don't have it.</summary>
+        public string Sid { get; set; }
         public List<RegValue> Originals { get; set; }
 
         public Backup() { Originals = new List<RegValue>(); Version = CurrentVersion; }
@@ -49,8 +66,27 @@ namespace Tmrh.Core
     /// </summary>
     public sealed class BackupStore
     {
-        readonly string dir;
-        public BackupStore(string directory) { dir = directory; }
+        readonly string dir, legacy;
+        readonly Func<string> currentSid;
+
+        /// <param name="legacyFile">Where the old test builds kept their saved copy (moved here on first use), or null.</param>
+        /// <param name="sid">The signed-in Windows account's SID, or null when it can't be told (then it isn't checked).</param>
+        public BackupStore(string directory, string legacyFile = null, Func<string> sid = null)
+        {
+            dir = directory; legacy = legacyFile; currentSid = sid ?? (() => null);
+        }
+
+        public string CurrentSid { get { try { return currentSid(); } catch { return null; } } }
+
+        public static string DefaultLegacyFile
+        {
+            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "We Are Crazy", "TMUF Registration Mode", "original-settings.txt"); }
+        }
+
+        public static string WindowsSid()
+        {
+            using (var id = System.Security.Principal.WindowsIdentity.GetCurrent()) return id.User == null ? null : id.User.Value;
+        }
 
         public static string DefaultDirectory
         {
@@ -60,16 +96,19 @@ namespace Tmrh.Core
         public string FilePath { get { return Path.Combine(dir, "original-settings.txt"); } }
 
         /// <summary>
-        /// Test builds were called "TMUF Registration Mode" and saved to a folder of that name. If a saved copy is
-        /// still there (Registration Mode left on), move it so Disable can still put those settings back.
+        /// If there's no saved copy here but the old test builds left one, move it here (on the same disk this is a
+        /// single rename: it either happens or the old file stays exactly as it was). If the move fails, throw:
+        /// carrying on as if there were no saved copy could save already-changed settings as the originals.
         /// </summary>
-        public static void MoveFromOldFolder()
+        void MigrateLegacy()
         {
-            string old = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "We Are Crazy", "TMUF Registration Mode", "original-settings.txt");
-            var now = new BackupStore(DefaultDirectory);
-            if (!File.Exists(old) || File.Exists(now.FilePath)) return;
-            Directory.CreateDirectory(DefaultDirectory);
-            File.Move(old, now.FilePath);
+            if (legacy == null || File.Exists(FilePath) || !File.Exists(legacy)) return;
+            try
+            {
+                Directory.CreateDirectory(dir);
+                File.Move(legacy, FilePath);
+            }
+            catch (Exception ex) { throw new LegacyBackupException(legacy, FilePath, ex); }
         }
 
         const int MaxFileBytes = 64 * 1024, MaxText = 1024, MaxItems = 32, MaxUser = 256;
@@ -81,13 +120,41 @@ namespace Tmrh.Core
         /// </summary>
         public Backup Load()
         {
+            MigrateLegacy();
             if (!File.Exists(FilePath)) return null;
             var bad = new List<string>();
-            Backup b;
-            try { b = Parse(File.ReadAllBytes(FilePath), bad); }
+            Backup b = null;
+            try
+            {
+                var raw = ReadBounded(FilePath);   // the size is checked before anything is read into memory
+                if (raw == null) bad.Add("The file is far bigger than a saved settings file can be.");
+                else b = Parse(raw, bad);
+            }
             catch (Exception ex) { bad.Add("Couldn't read it: " + ex.Message); b = null; }
+            if (b != null && b.Sid != null)
+            {
+                string me = CurrentSid;
+                if (me != null && !string.Equals(me, b.Sid, StringComparison.OrdinalIgnoreCase))
+                    bad.Add("It belongs to a different Windows account, so it won't be restored into this one.");
+            }
             if (bad.Count > 0 || b == null) throw BackupInvalid.Make(FilePath, bad);
             return b;
+        }
+
+        /// <summary>The file's bytes, or null if it's bigger than a saved settings file can be (nothing big is ever read).</summary>
+        static byte[] ReadBounded(string path)
+        {
+            if (new FileInfo(path).Length > MaxFileBytes) return null;
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                var buf = new byte[MaxFileBytes + 1];
+                int n = 0, got;
+                while (n < buf.Length && (got = fs.Read(buf, n, buf.Length - n)) > 0) n += got;
+                if (n > MaxFileBytes) return null;   // it grew after the size check
+                var raw = new byte[n];
+                Buffer.BlockCopy(buf, 0, raw, 0, n);
+                return raw;
+            }
         }
 
         /// <summary>Checks a backup file's contents. Every problem found is added to bad; null if there were any.</summary>
@@ -127,6 +194,12 @@ namespace Tmrh.Core
                         DateTime t;
                         if (DateTime.TryParse(v, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out t)) { b.Created = t; sawCreated = true; }
                         else bad.Add("The date it was saved isn't valid.");
+                        break;
+                    case "sid":   // v2 only, optional (files from v1.2.0 don't have it)
+                        if (b.Version == 1) bad.Add("Version 1 files don't have an account ID.");
+                        else if (v.Length < 5 || v.Length > 184 || !v.StartsWith("S-1-", StringComparison.Ordinal) || v.Substring(4).Any(ch => !(char.IsDigit(ch) && ch < 128) && ch != '-'))
+                            bad.Add("The Windows account ID in it isn't valid.");
+                        else b.Sid = v;
                         break;
                     case "user":
                         if (v.Length == 0 || v.Length > MaxUser || v.Any(char.IsControl)) bad.Add("The Windows account name in it isn't valid.");
@@ -174,6 +247,7 @@ namespace Tmrh.Core
             sb.AppendLine("stage=" + b.Stage);
             sb.AppendLine("created=" + b.Created.ToString("o", CultureInfo.InvariantCulture));
             sb.AppendLine("user=" + b.User);
+            if (b.Sid != null && b.Version >= 2) sb.AppendLine("sid=" + b.Sid);
             foreach (var v in b.Originals) sb.AppendLine("value=" + Encode(v));
             sb.AppendLine("end=1");
             string tmp = FilePath + ".tmp";
