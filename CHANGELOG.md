@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1
+Fixes from a second independent review.
+- A saved copy left by the old test builds ("TMUF Registration Mode") is moved in when first needed. If it can't be moved (for example an antivirus scan has it open), the tool now says so, shows where the file is and what to do, and won't turn Registration Mode on or off until it's sorted. Before, it carried on as if there was no saved copy, which could have saved already-changed settings as your "originals". The old file is never changed.
+- The saved settings file's size is checked before it's read, so an oversized file is rejected without being loaded.
+- New saved files record which Windows account they belong to (its SID). A file from a different account is refused and kept. Files from earlier versions, which don't have this, still work. The account name in the file is only a label, because names can change.
+
 ## 1.2.0
 Safety improvements from an independent code audit. Nothing about how you use it has changed.
 - The saved settings file is checked in full before anything is restored. It may only list the three settings this tool manages, for your own Windows account, each once, with sensible types and sizes, a known version and complete details. If anything is wrong, nothing is restored, nothing is changed and the file is kept. You then choose what to do: put the three boxes back to Windows' secure positions, and/or move the file aside (kept, never deleted).

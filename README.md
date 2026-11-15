@@ -54,6 +54,10 @@ less protected against fake or withdrawn certificates. Turn it OFF as soon as yo
 - **Asks before overwriting your changes:** if one of the three settings changed while Registration Mode was on,
   Disable shows what changed and asks before putting your originals back. Saying no changes nothing.
 - **One copy at a time:** opening it a second time brings the open window forward.
+- **Your account only, in the file too:** new saved copies record your Windows account's ID (SID), and a copy from a
+  different account is refused. The account *name* stored alongside is just a label, since names can change.
+- **Older test builds:** a saved copy left by "TMUF Registration Mode" is moved in when first needed. If it can't be
+  moved, the tool says where it is and changes nothing until that's sorted.
 - **Respects policies:** if a work or school policy controls the TLS or server revocation settings, it says so and changes nothing.
 - **Your account only:** it runs as you, never as administrator. All three settings belong to your own Windows
   account; asking for admin rights could change a different admin account's settings instead of yours.
