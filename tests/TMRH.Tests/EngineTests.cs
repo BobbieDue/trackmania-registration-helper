@@ -186,19 +186,31 @@ namespace Tmrh.Tests
         [Fact]
         public void BackupFileRoundTripsEveryKind()
         {
+            // Every value type round-trips exactly. Since v1.2.0 a saved file may only name the three managed settings,
+            // so each type is carried by one of them in turn (arbitrary names are now rejected: see BackupSafetyTests).
+            var kinds = new[]
+            {
+                RegValue.Absent(Hive.CurrentUser, IS, "SecureProtocols"),
+                Dw(IS, "SecureProtocols", 0xFFFFFFFF),
+                new RegValue(Hive.CurrentUser, IS, "SecureProtocols", RegKind.QWord, -5L),
+                new RegValue(Hive.CurrentUser, IS, "SecureProtocols", RegKind.String, "Ünset value"),
+                new RegValue(Hive.CurrentUser, IS, "SecureProtocols", RegKind.ExpandString, "%TEMP%\\a\tb"),
+                new RegValue(Hive.CurrentUser, IS, "SecureProtocols", RegKind.MultiString, new[] { "a", "", "c,d" }),
+                new RegValue(Hive.CurrentUser, IS, "SecureProtocols", RegKind.Binary, new byte[] { 0, 1, 255 }),
+            };
             var store = new BackupStore(dir);
-            var b = new Backup { Stage = Stage.Applied, Created = DateTime.UtcNow, User = "PC\\Jöbbie" };
-            b.Originals.Add(RegValue.Absent(Hive.CurrentUser, IS, "Ünset value"));
-            b.Originals.Add(Dw(IS, "SecureProtocols", 0xFFFFFFFF));
-            b.Originals.Add(new RegValue(Hive.CurrentUser, IS, "Q", RegKind.QWord, -5L));
-            b.Originals.Add(new RegValue(Hive.CurrentUser, IS, "S", RegKind.ExpandString, "%TEMP%\\a\tb"));
-            b.Originals.Add(new RegValue(Hive.CurrentUser, IS, "M", RegKind.MultiString, new[] { "a", "", "c,d" }));
-            b.Originals.Add(new RegValue(Hive.CurrentUser, IS, "B", RegKind.Binary, new byte[] { 0, 1, 255 }));
-            store.Save(b);
-            var l = store.Load();
-            Assert.Equal(Stage.Applied, l.Stage);
-            Assert.Equal(b.User, l.User);
-            for (int i = 0; i < b.Originals.Count; i++) Assert.True(b.Originals[i].SameAs(l.Originals[i]), b.Originals[i].Name);
+            foreach (var k in kinds)
+            {
+                var b = new Backup { Stage = Stage.Applied, Created = DateTime.UtcNow, User = "PC\\Jöbbie" };
+                b.Originals.Add(k);
+                b.Originals.Add(new RegValue(Hive.CurrentUser, IS, "CertificateRevocation", RegKind.String, "1"));
+                b.Originals.Add(RegValue.Absent(Hive.CurrentUser, SP, "State"));
+                store.Save(b);
+                var l = store.Load();
+                Assert.Equal(Stage.Applied, l.Stage);
+                Assert.Equal(b.User, l.User);
+                for (int i = 0; i < b.Originals.Count; i++) Assert.True(b.Originals[i].SameAs(l.Originals[i]), k.Kind + " " + b.Originals[i].Name);
+            }
         }
 
         [Fact]
@@ -206,7 +218,7 @@ namespace Tmrh.Tests
         {
             Directory.CreateDirectory(dir);
             File.WriteAllText(new BackupStore(dir).FilePath, "version=1\nstage=Applied\n");
-            Assert.Throws<InvalidDataException>(() => new BackupStore(dir).Load());
+            Assert.ThrowsAny<InvalidDataException>(() => new BackupStore(dir).Load());   // v1.2.0: BackupInvalidException, a kind of InvalidDataException
         }
     }
 }
