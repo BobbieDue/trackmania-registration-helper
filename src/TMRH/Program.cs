@@ -16,9 +16,35 @@ namespace Tmrh
             if (args.Length == 2 && args[0] == "--render") { Render(args[1]); return; }   // used by the build to screenshot the windows
             Application.ThreadException += (s, e) => Crash(e.Exception);
             AppDomain.CurrentDomain.UnhandledException += (s, e) => Crash(e.ExceptionObject as Exception);
-            try { BackupStore.MoveFromOldFolder(); } catch { }
-            var engine = new Engine(new WindowsRegistryStore(), new BackupStore(BackupStore.DefaultDirectory), new WinInetNotifier(), WindowsBuild);
-            Application.Run(new UI.MainForm(engine));
+            // One copy at a time, taken before anything reads or writes the saved settings or the registry.
+            using (var only = InstanceLock.TryAcquire(InstanceLock.DefaultName))
+            {
+                if (!only.Acquired) { ShowOtherCopy(); return; }
+                try { BackupStore.MoveFromOldFolder(); } catch { }
+                var engine = new Engine(new WindowsRegistryStore(), new BackupStore(BackupStore.DefaultDirectory), new WinInetNotifier(), WindowsBuild);
+                Application.Run(new UI.MainForm(engine));
+            }
+        }
+
+        [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        /// <summary>Another copy is already open: bring its window to the front, or say so if it can't be found.</summary>
+        static void ShowOtherCopy()
+        {
+            try
+            {
+                var me = System.Diagnostics.Process.GetCurrentProcess();
+                foreach (var p in System.Diagnostics.Process.GetProcessesByName(me.ProcessName))
+                {
+                    if (p.Id == me.Id || p.MainWindowHandle == IntPtr.Zero) continue;
+                    ShowWindow(p.MainWindowHandle, 9);   // SW_RESTORE
+                    SetForegroundWindow(p.MainWindowHandle);
+                    return;
+                }
+            }
+            catch { }
+            MessageBox.Show("TrackMania Registration Helper is already open. Use the window that's already open.", "TrackMania Registration Helper", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         /// <summary>Saves pictures of the windows at normal and large text sizes, so layout can be checked by the build.</summary>
@@ -29,7 +55,7 @@ namespace Tmrh
             foreach (var scale in new[] { 1F, 1.5F })
             {
                 UI.Theme.FontScale = scale;
-                foreach (var mode in new[] { Mode.Off, Mode.On, Mode.Interrupted })
+                foreach (var mode in new[] { Mode.Off, Mode.On, Mode.Interrupted, Mode.BadBackup })
                 {
                     using (var f = new UI.MainForm(engine) { StartPosition = FormStartPosition.Manual, Location = new System.Drawing.Point(0, 0), ShowInTaskbar = false })
                     {

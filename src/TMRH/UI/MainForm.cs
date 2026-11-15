@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
@@ -18,6 +19,7 @@ namespace Tmrh.UI
         readonly Button enableBtn = new Button(), disableBtn = new Button();
         readonly Label progress = new Label();
         bool busy;
+        Status last;
 
         public MainForm(Engine engine)
         {
@@ -140,6 +142,7 @@ namespace Tmrh.UI
             {
                 case Mode.On: SetStatus("\u25CF", "Registration Mode is ON", "Start TrackMania and create your account, then come back and turn it OFF.", Palette.Blue, Palette.White, Palette.BlueDark); enableBtn.Enabled = false; disableBtn.Enabled = true; break;
                 case Mode.Interrupted: SetStatus("\u25B2", "Last change didn't finish", "Windows or this tool stopped part-way. Click Disable to put your original settings back.", Palette.OrangeLight, Palette.Text, Palette.Orange); enableBtn.Enabled = false; disableBtn.Enabled = true; break;
+                case Mode.BadBackup: SetStatus("\u25B2", "Saved settings file is damaged", "It failed its safety check, so nothing will be restored from it. Click Disable to see your options.", Palette.OrangeLight, Palette.Text, Palette.Orange); enableBtn.Enabled = false; disableBtn.Enabled = true; break;
                 default: SetStatus("\u25CB", "Registration Mode is OFF", "Your normal Windows settings are in place.", Palette.GreyLight, Palette.Text, Palette.Grey); enableBtn.Enabled = true; disableBtn.Enabled = false; break;
             }
         }
@@ -158,6 +161,7 @@ namespace Tmrh.UI
             Status s;
             try { s = engine.GetStatus(); }
             catch (Exception ex) { SetStatus("▲", "CAN'T READ SETTINGS", ex.Message, Palette.OrangeLight, Palette.Text, Palette.Orange); return; }
+            last = s;
             switch (s.Mode)
             {
                 case Mode.On:
@@ -172,18 +176,22 @@ namespace Tmrh.UI
                     SetStatus("▲", "Last change didn't finish", "Windows or this tool stopped part-way. Click Disable to put your original settings back.", Palette.OrangeLight, Palette.Text, Palette.Orange); break;
                 case Mode.Managed:
                     SetStatus("▲", "Controlled by your organisation", "A policy on this PC controls these settings, so this tool can't change them.", Palette.OrangeLight, Palette.Text, Palette.Orange); break;
+                case Mode.BadBackup:
+                    SetStatus("\u25B2", "Saved settings file is damaged", "It failed its safety check, so nothing will be restored from it. Click Disable to see your options.", Palette.OrangeLight, Palette.Text, Palette.Orange); break;
             }
             enableBtn.Enabled = !busy && (s.Mode == Mode.Off || s.Mode == Mode.ChangedSince);
-            disableBtn.Enabled = !busy && s.Backup != null;
+            disableBtn.Enabled = !busy && (s.Backup != null || s.Mode == Mode.BadBackup);
+            if (offerRecovery && s.Mode == Mode.BadBackup) { BeginInvoke(new Action(Recovery)); return; }
             if (offerRecovery && s.Mode == Mode.Interrupted &&
                 MessageBox.Show(this, "The last change to Registration Mode didn't finish (for example Windows restarted part-way).\n\nPut your original settings back now?",
                     Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
                 BeginInvoke(new Action(async () => await Run(false, true)));
         }
 
-        async Task Run(bool enable, bool skipConfirm = false)
+        async Task Run(bool enable, bool skipConfirm = false, bool overwriteChanges = false)
         {
             if (busy) return;
+            if (!enable && last != null && last.Mode == Mode.BadBackup) { Recovery(); return; }
             if (enable && !skipConfirm)
             {
                 var msg = "Registration Mode changes these Windows Internet Options settings for your Windows account only:\n\n" +
@@ -199,7 +207,7 @@ namespace Tmrh.UI
             try
             {
                 Action<string> p = t => BeginInvoke(new Action(() => progress.Text = t));
-                r = await Task.Run(() => enable ? engine.Enable(p) : engine.Disable(p));
+                r = await Task.Run(() => enable ? engine.Enable(p) : engine.Disable(p, overwriteChanges));
             }
             catch (Exception ex)
             {
@@ -207,10 +215,50 @@ namespace Tmrh.UI
                     "\n\nYour original settings are saved. Open this tool again or click Disable to put them back.");
             }
             busy = false; UseWaitCursor = false;
+            if (!enable && r.NeedsConfirmation.Count > 0)
+            {
+                progress.Text = "Waiting for you to decide.";
+                var q = "These settings were changed after Registration Mode was turned on:\n\n" +
+                        string.Join("\n", r.NeedsConfirmation.Select(c => "• " + c.Setting + "\n     Registration Mode set: " + c.Expected.Describe() + "\n     It is now: " + c.Current.Describe())) +
+                        "\n\nDisable will overwrite these changes and put back your original settings exactly as they were before Registration Mode.\n\nRestore your original settings?";
+                if (MessageBox.Show(this, q, Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes) { await Run(false, true, true); return; }
+                progress.Text = "Nothing was changed.";
+                RefreshStatus(false);
+                MessageBox.Show(this, "Nothing was changed. Your settings and your saved copy are as they were.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
             progress.Text = r.Ok ? (enable ? "Done: Registration Mode is on." : "Done: your settings are restored.") : "Not done, see the message.";
             RefreshStatus(false);
             MessageBox.Show(this, r.Message + (r.Details.Count > 0 ? "\n\n" + string.Join("\n", r.Details.Select(d => "• " + d)) : ""),
                 Text, MessageBoxButtons.OK, r.Ok ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            if (r.Housekeeping.Count > 0)   // separate from the result: the settings themselves are fine
+                MessageBox.Show(this, "Your settings were restored correctly. One tidy-up step didn't work:\n\n" + string.Join("\n", r.Housekeeping.Select(d => "• " + d)),
+                    Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        /// <summary>
+        /// The saved settings file failed its safety check. Nothing is restored from it. Every way forward is the
+        /// player's explicit choice: reset the three boxes to Windows' secure positions, and/or move the file aside (kept).
+        /// </summary>
+        void Recovery()
+        {
+            var probs = (last != null ? last.BackupProblems : new List<string>()).Take(6).ToList();
+            var msg = "Your saved settings file failed its safety check, so this tool won't restore anything from it. It hasn't changed any settings and the file has been left as it is.\n\n" +
+                      (probs.Count > 0 ? "What's wrong:\n" + string.Join("\n", probs.Select(p => "• " + p)) + "\n\n" : "") +
+                      "The file is in:\n" + BackupStore.DefaultDirectory + "\n\n" +
+                      "You can put the three Internet Options boxes back to Windows' secure positions now (TLS 1.0 and 1.1 off, TLS 1.2 on" + (engine.Tls13Available ? ", TLS 1.3 on" : "") + ", both certificate revocation checks on). Other settings aren't touched.\n\nDo that now?";
+            if (MessageBox.Show(this, msg, Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+            {
+                Result r;
+                try { r = engine.ResetToSecureSettings(); } catch (Exception ex) { r = Result.Fail("That didn't work: " + ex.Message); }
+                MessageBox.Show(this, r.Message + (r.Details.Count > 0 ? "\n\n" + string.Join("\n", r.Details.Select(d => "• " + d)) : ""), Text, MessageBoxButtons.OK, r.Ok ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            }
+            if (MessageBox.Show(this, "Move the damaged file aside so this tool can be used again? It is kept in the same folder (renamed to damaged-...txt), never deleted.", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+            {
+                try { var f = new BackupStore(BackupStore.DefaultDirectory).SetAside(); MessageBox.Show(this, "Moved to:\n" + f, Text, MessageBoxButtons.OK, MessageBoxIcon.Information); }
+                catch (Exception ex) { MessageBox.Show(this, "It couldn't be moved: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            }
+            RefreshStatus(false);
         }
 
         void ShowDetails()
