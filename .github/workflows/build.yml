@@ -1,0 +1,86 @@
+name: Build
+
+# Every push: build and test on two versions of Windows.
+# A version tag (v1.2.3): also publish a GitHub release with the exe and its SHA-256.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Version
+        id: v
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT; else echo "version=0.0.0-dev" >> $GITHUB_OUTPUT; fi
+      - name: Test (including turning it on and off on this machine's real registry)
+        run: dotnet test tests/TMRH.Tests -c Release --logger "console;verbosity=normal"
+        env:
+          TMUF_E2E: '1'
+      - name: Build
+        run: dotnet build src/TMRH -c Release -o out -p:Version=${{ steps.v.outputs.version }}
+      - name: Screenshots (layout check at normal and large text)
+        shell: pwsh
+        run: |
+          Start-Process -FilePath out/TrackMania-Registration-Helper.exe -ArgumentList '--render', "$PWD/shots" -Wait
+          Get-ChildItem shots/*.png | Select-Object Name, Length
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $h = (Get-FileHash out/TrackMania-Registration-Helper.exe -Algorithm SHA256).Hash.ToLower()
+          "$h  TrackMania-Registration-Helper.exe" | Out-File -Encoding ascii out/SHA256SUMS.txt
+          Get-Content out/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TMRH-${{ matrix.os }}
+          path: |
+            out/TrackMania-Registration-Helper.exe
+            out/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ matrix.os }}
+          path: shots/*.png
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: art
+      - name: Both Windows builds must be identical (reproducible)
+        run: |
+          cat art/TMRH-windows-2022/SHA256SUMS.txt art/TMRH-windows-2025/SHA256SUMS.txt
+          cmp art/TMRH-windows-2022/TrackMania-Registration-Helper.exe art/TMRH-windows-2025/TrackMania-Registration-Helper.exe
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          git tag -l --format='%(contents)' "$TAG" > notes.txt
+          [ -s notes.txt ] || echo "TrackMania Registration Helper $TAG" > notes.txt
+          printf '\n\nSHA-256: `%s`\n' "$(cut -d' ' -f1 art/TMRH-windows-2025/SHA256SUMS.txt)" >> notes.txt
+          gh release create "$TAG" art/TMRH-windows-2025/TrackMania-Registration-Helper.exe art/TMRH-windows-2025/SHA256SUMS.txt \
+            --title "TMRH ${TAG#v}" --notes-file notes.txt
