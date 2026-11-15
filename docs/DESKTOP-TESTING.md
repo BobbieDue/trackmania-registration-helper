@@ -4,7 +4,7 @@ The GitHub builds run on **Windows Server 2022 and 2025**. They prove the code b
 Registration Mode on and off restores the real registry exactly. They do **not** prove how the Internet Options
 window looks or behaves on a desktop PC, or that TrackMania registration actually works. That is what this plan is for.
 
-**Status: none of the desktop tests below have been carried out yet.** Results are added to the table at the bottom
+**Status: one result so far (Windows 11, reported by the We Are Crazy admin, see the table). Everything else below has not been run yet.** Results are added to the table at the bottom
 as they are done. Nothing is marked as tested until someone has actually run it on that version of Windows.
 
 ## Machines
@@ -65,4 +65,5 @@ On at least one Windows 10 and one Windows 11 machine, with TrackMania Nations F
 
 | Date | Windows | Scaling | Section | Result | Tester |
 |---|---|---|---|---|---|
-| | | | | not yet run | |
+| 2026-11-15 | Windows 11 (build not recorded) | not recorded | 4 (v1.2.0) | Reported working: "it works on windows 11". Details (build, whether a new account was created, Disable afterwards) not yet recorded | We Are Crazy admin |
+| | Windows 10 22H2 | | all | not yet run | |
