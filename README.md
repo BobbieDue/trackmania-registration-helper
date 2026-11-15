@@ -47,9 +47,29 @@ less protected against fake or withdrawn certificates. Turn it OFF as soon as yo
 - **Crash-safe:** the saved copy is swapped in whole, never half-written. If Windows shuts down part-way, opening TMRH
   again offers to put your settings back.
 - **Never guesses:** with no saved copy, Disable changes nothing.
-- **Respects policies:** if a work or school policy controls these settings, it says so and changes nothing.
+- **Checks the saved copy first:** before restoring, the whole file is checked. It may only list these three settings,
+  for your own account, each once, with sensible types and sizes. If anything is wrong, nothing is restored, nothing is
+  changed, and the file is kept. You then choose: put the three boxes back to Windows' secure positions, and/or move
+  the file aside (kept as `damaged-...txt`, never deleted). Neither happens unless you choose it.
+- **Asks before overwriting your changes:** if one of the three settings changed while Registration Mode was on,
+  Disable shows what changed and asks before putting your originals back. Saying no changes nothing.
+- **One copy at a time:** opening it a second time brings the open window forward.
+- **Respects policies:** if a work or school policy controls the TLS or server revocation settings, it says so and changes nothing.
 - **Your account only:** it runs as you, never as administrator. All three settings belong to your own Windows
   account; asking for admin rights could change a different admin account's settings instead of yours.
+
+### Policies: what is and isn't detected
+
+TMRH looks for Windows policy values for **TLS** and **server certificate revocation** (`SecureProtocols` and
+`CertificateRevocation` under `Software\Policies\Microsoft\Windows\CurrentVersion\Internet Settings`, in both
+HKLM and HKCU) and refuses to change anything if one is set.
+
+**Check for publisher's certificate revocation has no Windows policy setting of its own.** Microsoft's built-in
+Internet Explorer policy templates don't include it. Microsoft's support blog published a custom template for admins
+who wanted to control it, and that template writes the user's own `State` value directly (146432 = ticked,
+146944 = unticked): the same value TMRH changes, with no separate policy location to detect. So if a workplace pushes
+that value, TMRH can't tell. If the policy puts it back while Registration Mode is on, TMRH shows "settings were
+changed" and Disable asks before restoring.
 
 **Settings check** (link at the bottom of the window) lets you confirm the table above on your own PC: take a
 snapshot, tick or untick one box in Internet Options and click Apply, then Compare. It only reads, never changes.
@@ -67,8 +87,16 @@ Each release lists the file's SHA-256, also in `SHA256SUMS.txt`. In PowerShell:
 Get-FileHash .\TrackMania-Registration-Helper.exe -Algorithm SHA256
 ```
 
-Every release is built by GitHub Actions from this source on two different versions of Windows, and is only
-published if both builds come out byte-for-byte identical.
+Every release is built by GitHub Actions from this source on two different versions of Windows Server (2022 and
+2025), and is only published if both builds come out byte-for-byte identical.
+
+## What has been tested
+
+- **Automatically, on every change** (GitHub Actions, Windows Server 2022 and 2025): the unit tests, including the saved
+  file safety checks, and turning Registration Mode on and off on the build machine's real registry.
+- **Desktop Windows 10 and 11**: the plan is in [docs/DESKTOP-TESTING.md](docs/DESKTOP-TESTING.md). Results are
+  recorded there as they're done; anything not listed as done hasn't been verified on a desktop PC yet, including
+  creating a real TrackMania account.
 
 ## Building it yourself
 
