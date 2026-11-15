@@ -11,7 +11,15 @@ namespace Tmrh.Core
         NotNeeded,      // no backup, but the settings already allow registration
         ChangedSince,   // backup saved, but something changed the settings since Enable
         Interrupted,    // Enable or Disable stopped part-way (crash, power cut): restore is ready
-        Managed         // an organisation's policy controls these settings
+        Managed,        // an organisation's policy controls these settings
+        BadBackup       // the saved settings file failed validation: nothing is restored from it
+    }
+
+    /// <summary>A setting that no longer has the value Registration Mode gave it.</summary>
+    public sealed class Change
+    {
+        public string Setting; public RegValue Expected; public RegValue Current;
+        public override string ToString() { return Setting + ": Registration Mode set " + Expected.Describe() + ", it is now " + Current.Describe(); }
     }
 
     public sealed class Status
@@ -20,6 +28,7 @@ namespace Tmrh.Core
         public bool Tls13Available;
         public List<string> Managed = new List<string>();
         public Backup Backup;
+        public List<string> BackupProblems = new List<string>();
     }
 
     public sealed class Result
@@ -27,6 +36,10 @@ namespace Tmrh.Core
         public bool Ok;
         public string Message;
         public List<string> Details = new List<string>();
+        /// <summary>Disable stopped before changing anything because these settings changed since Enable; ask, then call again with overwrite.</summary>
+        public List<Change> NeedsConfirmation = new List<Change>();
+        /// <summary>Problems after a successful restore (archiving the saved copy). The registry itself is fine.</summary>
+        public List<string> Housekeeping = new List<string>();
         public static Result Fail(string m, IEnumerable<string> d = null) { var r = new Result { Ok = false, Message = m }; if (d != null) r.Details.AddRange(d); return r; }
     }
 
@@ -56,19 +69,27 @@ namespace Tmrh.Core
         uint NeededTls { get { return Settings.Tls10 | Settings.Tls11 | Settings.Tls12 | (Tls13Available ? Settings.Tls13 : 0); } }
 
         /// <summary>What each touched value should become, worked out from what it is now (only our bits change).</summary>
-        List<RegValue> Desired(List<RegValue> now)
+        List<RegValue> Desired(List<RegValue> now) { return now.Select(Expected).ToList(); }
+
+        /// <summary>The value Registration Mode gives one setting, starting from the value it had before.</summary>
+        RegValue Expected(RegValue before)
         {
-            var sp = now[0];
-            uint baseProtocols = sp.AsDWord ?? (reg.Read(Hive.LocalMachine, Settings.InternetSettings, Settings.SecureProtocols).AsDWord ?? 0u);
-            var cr = now[1];
-            var st = now[2];
-            uint baseState = st.AsDWord ?? Settings.PublisherDefaultState;
-            return new List<RegValue>
+            if (before.Name == Settings.SecureProtocols)
             {
-                RegValue.DWord(Hive.CurrentUser, sp.Path, sp.Name, 0).WithDWord(baseProtocols | NeededTls),
-                RegValue.DWord(Hive.CurrentUser, cr.Path, cr.Name, 0),
-                RegValue.DWord(Hive.CurrentUser, st.Path, st.Name, 0).WithDWord(baseState | Settings.PublisherNoRevocationBit),
-            };
+                uint baseProtocols = before.AsDWord ?? (reg.Read(Hive.LocalMachine, Settings.InternetSettings, Settings.SecureProtocols).AsDWord ?? 0u);
+                return RegValue.DWord(Hive.CurrentUser, before.Path, before.Name, 0).WithDWord(baseProtocols | NeededTls);
+            }
+            if (before.Name == Settings.CertificateRevocation) return RegValue.DWord(Hive.CurrentUser, before.Path, before.Name, 0);
+            uint baseState = before.AsDWord ?? Settings.PublisherDefaultState;
+            return RegValue.DWord(Hive.CurrentUser, before.Path, before.Name, 0).WithDWord(baseState | Settings.PublisherNoRevocationBit);
+        }
+
+        /// <summary>Settings that differ now from what Registration Mode set (only meaningful once Enable finished).</summary>
+        public List<Change> ChangesSinceEnable(Backup b)
+        {
+            if (b == null || b.Stage != Stage.Applied) return new List<Change>();
+            return b.Originals.Select(o => new Change { Setting = Friendly(o), Expected = Expected(o), Current = reg.Read(o.Hive, o.Path, o.Name) })
+                .Where(c => !c.Current.SameAs(c.Expected)).ToList();
         }
 
         bool AllowsRegistration(List<RegValue> now)
@@ -81,7 +102,9 @@ namespace Tmrh.Core
         public Status GetStatus()
         {
             var s = new Status { Tls13Available = Tls13Available, Managed = Settings.Managed(reg) };
-            s.Backup = store.Load();
+            try { s.Backup = store.Load(); }
+            catch (BackupInvalidException ex) { s.Mode = Mode.BadBackup; s.BackupProblems = ex.Problems; return s; }
+            if (s.Backup != null && s.Backup.Stage == Stage.Restored) { store.Retire(); s.Backup = null; }   // restored earlier; only the archiving was left
             var now = Settings.Touched(reg).ToList();
             if (s.Backup != null && s.Backup.Stage != Stage.Applied) s.Mode = Mode.Interrupted;
             else if (s.Backup != null) s.Mode = AllowsRegistration(now) ? Mode.On : Mode.ChangedSince;
@@ -97,7 +120,10 @@ namespace Tmrh.Core
             if (managed.Count > 0)
                 return Result.Fail("These settings are controlled by a policy on this PC (for example a work or school PC), so this tool can't change them. Nothing was changed.", managed);
 
-            var backup = store.Load();
+            Backup backup;
+            try { backup = store.Load(); }
+            catch (BackupInvalidException ex) { return Result.Fail("Your saved settings file is damaged, so nothing was changed. It has been left as it is. Use the recovery options to deal with it first.", ex.Problems); }
+            if (backup != null && backup.Stage == Stage.Restored) backup = null;   // already restored: start a fresh copy
             var now = Settings.Touched(reg).ToList();
             if (backup == null)
             {
@@ -108,7 +134,7 @@ namespace Tmrh.Core
             else
             {
                 progress("Your original settings are already saved, keeping them as they are...");
-                backup.Stage = Stage.Applying;   // never replace the originals
+                backup.Stage = Stage.Applying;   // never replace the originals (a version 1 file stays version 1)
                 store.Save(backup);
             }
             Step("backup-saved");
@@ -134,12 +160,28 @@ namespace Tmrh.Core
             return r;
         }
 
-        public Result Disable(Action<string> progress)
+        public Result Disable(Action<string> progress) { return Disable(progress, false); }
+
+        /// <summary>
+        /// Puts the saved settings back exactly. The whole saved file is checked first; if it fails, nothing is written
+        /// and the file is kept. If any setting changed since Enable, nothing is written unless overwriteChanges is true:
+        /// the result lists the changes so the player can decide.
+        /// </summary>
+        public Result Disable(Action<string> progress, bool overwriteChanges)
         {
             progress = progress ?? (_ => { });
-            var backup = store.Load();
-            if (backup == null)
+            Backup backup;
+            try { backup = store.Load(); }
+            catch (BackupInvalidException ex)
+            {
+                return Result.Fail("Your saved settings file failed its safety check, so nothing was restored and nothing was changed. The file has been kept as it is.", ex.Problems);
+            }
+            if (backup == null || backup.Stage == Stage.Restored)
                 return Result.Fail("There are no saved settings to restore, so nothing was changed. (Registration Mode was not turned on by this tool on this Windows account.)");
+
+            var changed = ChangesSinceEnable(backup);
+            if (changed.Count > 0 && !overwriteChanges)
+                return new Result { Ok = false, NeedsConfirmation = changed, Message = "Some settings changed after Registration Mode was turned on. Nothing has been changed yet." };
 
             backup.Stage = Stage.Restoring;
             store.Save(backup);
@@ -158,8 +200,35 @@ namespace Tmrh.Core
             if (wrong.Count > 0)
                 return Result.Fail("Some settings could not be put back. Your saved copy is kept, so you can try Disable again.", wrong);
 
-            store.Retire();
-            return new Result { Ok = true, Message = "Registration Mode is now off. Your original Windows Internet Options settings have been restored." };
+            var r = new Result { Ok = true, Message = "Registration Mode is now off. Your original Windows Internet Options settings have been restored." };
+            r.Housekeeping = store.Retire();   // never throws: the registry is already back and checked
+            return r;
+        }
+
+        /// <summary>
+        /// Explicit recovery when the saved file can't be trusted: puts the three boxes back to Windows' secure positions
+        /// (TLS 1.0 and 1.1 off, TLS 1.2 on, 1.3 on where available, both revocation checks on), keeping any other bits.
+        /// Never called automatically. The saved file is not touched.
+        /// </summary>
+        public Result ResetToSecureSettings()
+        {
+            var managed = Settings.Managed(reg);
+            if (managed.Count > 0) return Result.Fail("These settings are controlled by a policy on this PC, so this tool can't change them. Nothing was changed.", managed);
+            var now = Settings.Touched(reg).ToList();
+            uint tls13 = Tls13Available ? Settings.Tls13 : 0;
+            var want = new List<RegValue>
+            {
+                now[0].Kind == RegKind.DWord ? now[0].WithDWord((now[0].AsDWord.Value & ~(Settings.Tls10 | Settings.Tls11)) | Settings.Tls12 | tls13)
+                                             : RegValue.DWord(Hive.CurrentUser, Settings.InternetSettings, Settings.SecureProtocols, 0).WithDWord(Settings.Tls12 | tls13),
+                RegValue.DWord(Hive.CurrentUser, Settings.InternetSettings, Settings.CertificateRevocation, 1),
+                now[2].Kind == RegKind.DWord ? now[2].WithDWord(now[2].AsDWord.Value & ~Settings.PublisherNoRevocationBit)
+                                             : RegValue.DWord(Hive.CurrentUser, Settings.SoftwarePublishing, Settings.State, 0).WithDWord(Settings.PublisherDefaultState),
+            };
+            foreach (var v in want) reg.Write(v);
+            notify.SettingsChanged();
+            var wrong = want.Where(v => !reg.Read(v.Hive, v.Path, v.Name).SameAs(v)).Select(v => Friendly(v) + ": wanted " + v.Describe() + ", found " + reg.Read(v.Hive, v.Path, v.Name).Describe()).ToList();
+            if (wrong.Count > 0) return Result.Fail("Some settings didn't change as expected.", wrong);
+            return new Result { Ok = true, Message = "The three settings are back to Windows' secure positions." };
         }
 
         void Step(string what) { if (StepHook != null) StepHook(what); }
