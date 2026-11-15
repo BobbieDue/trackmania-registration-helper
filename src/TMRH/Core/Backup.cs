@@ -10,13 +10,24 @@ namespace Tmrh.Core
     /// <summary>Restored = the settings were put back and checked, but the file couldn't be archived yet (version 2 only).</summary>
     public enum Stage { Applying, Applied, Restoring, Restored }
 
-    /// <summary>The saved settings file failed validation. Nothing has been restored from it and the file is left as it is.</summary>
-    public sealed class BackupInvalidException : InvalidDataException
+    /// <summary>
+    /// The saved settings file failed validation: an InvalidDataException carrying the list of problems found.
+    /// Nothing has been restored from it and the file is left as it is.
+    /// </summary>
+    public static class BackupInvalid
     {
-        public List<string> Problems { get; private set; }
-        public BackupInvalidException(string file, List<string> problems)
-            : base("The saved settings file can't be trusted, so nothing was restored from it: " + file + (problems.Count > 0 ? " (" + problems[0] + ")" : ""))
-        { Problems = problems; }
+        const string Key = "TMRH.Problems";
+        public static InvalidDataException Make(string file, List<string> problems)
+        {
+            var ex = new InvalidDataException("The saved settings file can't be trusted, so nothing was restored from it: " + file + (problems.Count > 0 ? " (" + problems[0] + ")" : ""));
+            ex.Data[Key] = problems.ToArray();
+            return ex;
+        }
+        public static List<string> Problems(InvalidDataException ex)
+        {
+            var p = ex.Data[Key] as string[];
+            return p != null ? p.ToList() : new List<string> { ex.Message };
+        }
     }
 
     /// <summary>The player's original settings, saved once before anything changes.</summary>
@@ -65,7 +76,7 @@ namespace Tmrh.Core
 
         /// <summary>
         /// Reads and checks the whole file before anything uses it. Returns null when there is no file. Throws
-        /// BackupInvalidException (and leaves the file alone) if anything is wrong: only the settings this tool manages,
+        /// an InvalidDataException from BackupInvalid (and leaves the file alone) if anything is wrong: only the settings this tool manages,
         /// for the current user, each once, with sensible types and sizes, a known version, stage and complete metadata.
         /// </summary>
         public Backup Load()
@@ -75,7 +86,7 @@ namespace Tmrh.Core
             Backup b;
             try { b = Parse(File.ReadAllBytes(FilePath), bad); }
             catch (Exception ex) { bad.Add("Couldn't read it: " + ex.Message); b = null; }
-            if (bad.Count > 0 || b == null) throw new BackupInvalidException(FilePath, bad);
+            if (bad.Count > 0 || b == null) throw BackupInvalid.Make(FilePath, bad);
             return b;
         }
 

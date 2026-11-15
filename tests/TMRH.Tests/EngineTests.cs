@@ -218,7 +218,7 @@ namespace Tmrh.Tests
         {
             Directory.CreateDirectory(dir);
             File.WriteAllText(new BackupStore(dir).FilePath, "version=1\nstage=Applied\n");
-            Assert.ThrowsAny<InvalidDataException>(() => new BackupStore(dir).Load());   // v1.2.0: BackupInvalidException, a kind of InvalidDataException
+            Assert.Throws<InvalidDataException>(() => new BackupStore(dir).Load());
         }
     }
 }

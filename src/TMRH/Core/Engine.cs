@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 namespace Tmrh.Core
@@ -103,7 +104,7 @@ namespace Tmrh.Core
         {
             var s = new Status { Tls13Available = Tls13Available, Managed = Settings.Managed(reg) };
             try { s.Backup = store.Load(); }
-            catch (BackupInvalidException ex) { s.Mode = Mode.BadBackup; s.BackupProblems = ex.Problems; return s; }
+            catch (InvalidDataException ex) { s.Mode = Mode.BadBackup; s.BackupProblems = BackupInvalid.Problems(ex); return s; }
             if (s.Backup != null && s.Backup.Stage == Stage.Restored) { store.Retire(); s.Backup = null; }   // restored earlier; only the archiving was left
             var now = Settings.Touched(reg).ToList();
             if (s.Backup != null && s.Backup.Stage != Stage.Applied) s.Mode = Mode.Interrupted;
@@ -122,7 +123,7 @@ namespace Tmrh.Core
 
             Backup backup;
             try { backup = store.Load(); }
-            catch (BackupInvalidException ex) { return Result.Fail("Your saved settings file is damaged, so nothing was changed. It has been left as it is. Use the recovery options to deal with it first.", ex.Problems); }
+            catch (InvalidDataException ex) { return Result.Fail("Your saved settings file is damaged, so nothing was changed. It has been left as it is. Use the recovery options to deal with it first.", BackupInvalid.Problems(ex)); }
             if (backup != null && backup.Stage == Stage.Restored) backup = null;   // already restored: start a fresh copy
             var now = Settings.Touched(reg).ToList();
             if (backup == null)
@@ -172,9 +173,9 @@ namespace Tmrh.Core
             progress = progress ?? (_ => { });
             Backup backup;
             try { backup = store.Load(); }
-            catch (BackupInvalidException ex)
+            catch (InvalidDataException ex)
             {
-                return Result.Fail("Your saved settings file failed its safety check, so nothing was restored and nothing was changed. The file has been kept as it is.", ex.Problems);
+                return Result.Fail("Your saved settings file failed its safety check, so nothing was restored and nothing was changed. The file has been kept as it is.", BackupInvalid.Problems(ex));
             }
             if (backup == null || backup.Stage == Stage.Restored)
                 return Result.Fail("There are no saved settings to restore, so nothing was changed. (Registration Mode was not turned on by this tool on this Windows account.)");
