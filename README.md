@@ -9,6 +9,12 @@ settings the old system needs, only while you create your account, and then rest
 
 Made for returning players by the [We Are C®AżΨ](https://wearecrazy.co.uk/) TrackMania community.
 
+## Status
+
+**Version 1.2.2 is the final release.** It has been through two independent code reviews and a final audit, and is
+now frozen: no new features or redesigns are planned. Fixes will only be made if a real problem is found. Testing on
+desktop Windows 10 and 11 is still to be done (see [What has been tested](#what-has-been-tested)).
+
 ## How to use it
 
 1. Download `TrackMania-Registration-Helper.exe` from the [latest release](../../releases/latest) or the
