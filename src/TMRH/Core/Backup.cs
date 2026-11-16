@@ -195,9 +195,8 @@ namespace Tmrh.Core
                         if (DateTime.TryParse(v, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out t)) { b.Created = t; sawCreated = true; }
                         else bad.Add("The date it was saved isn't valid.");
                         break;
-                    case "sid":   // v2 only, optional (files from v1.2.0 don't have it)
-                        if (b.Version == 1) bad.Add("Version 1 files don't have an account ID.");
-                        else if (v.Length < 5 || v.Length > 184 || !v.StartsWith("S-1-", StringComparison.Ordinal) || v.Substring(4).Any(ch => !(char.IsDigit(ch) && ch < 128) && ch != '-'))
+                    case "sid":   // v2 only, optional (files from v1.2.0 don't have it); the version is checked after all lines are read
+                        if (v.Length < 5 || v.Length > 184 || !v.StartsWith("S-1-", StringComparison.Ordinal) || v.Substring(4).Any(ch => !(char.IsDigit(ch) && ch < 128) && ch != '-'))
                             bad.Add("The Windows account ID in it isn't valid.");
                         else b.Sid = v;
                         break;
@@ -224,6 +223,8 @@ namespace Tmrh.Core
             if (b.User == null && !seen.Contains("user")) bad.Add("It has no Windows account name.");
             if (!sawEnd) bad.Add("It is incomplete (no end marker), for example it was cut off part-way.");
             if (b.Version == 1 && b.Stage == Stage.Restored) bad.Add("Version 1 files can't be in the Restored stage.");
+            // 1.2.2: checked once every line is read, so the order of the lines can't get round it
+            if (b.Version == 1 && seen.Contains("sid")) bad.Add("Version 1 files don't have an account ID.");
 
             var names = b.Originals.Select(o => o.Name).ToList();
             foreach (var d in names.GroupBy(x => x, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1))

@@ -220,5 +220,48 @@ namespace Tmrh.Tests
             File.WriteAllText(new BackupStore(dir).FilePath, "version=1\nstage=Applied\n");
             Assert.Throws<InvalidDataException>(() => new BackupStore(dir).Load());
         }
-    }
+    
+        // ---------------------------------------------------------------- 1.2.2: an error before anything is saved
+
+        sealed class FailingReads : IRegistryStore
+        {
+            public int Writes;
+            public RegValue Read(Hive h, string p, string n) { throw new UnauthorizedAccessException("registry read refused"); }
+            public void Write(RegValue v) { Writes++; }
+            public void Delete(Hive h, string p, string n) { Writes++; }
+            public string[] ValueNames(Hive h, string p) { throw new UnauthorizedAccessException("registry read refused"); }
+        }
+
+        [Fact]
+        public void ErrorBeforeTheBackupDoesNotClaimOneExists()
+        {
+            var r = new FailingReads(); var e = new Engine(r, new BackupStore(dir), null, () => 22631);
+            Exception ex = null;
+            try { e.Enable(null); } catch (Exception x) { ex = x; }
+            Assert.NotNull(ex);                                   // the first registry / policy read fails
+            Assert.Equal(0, r.Writes);
+            Assert.False(File.Exists(new BackupStore(dir).FilePath));
+            var copy = e.VerifiedSavedCopy();
+            Assert.Null(copy);
+            var m = Engine.StoppedMessage(true, ex.Message, copy);
+            Assert.DoesNotContain("are saved", m);
+            Assert.DoesNotContain("still kept", m);
+            Assert.Contains("No saved copy of your original settings could be confirmed", m);
+            Assert.Contains("open it again", m);
+            Assert.Contains("Don't assume Registration Mode was turned on", m);
+        }
+
+        [Fact]
+        public void ErrorAfterTheBackupSaysTheCheckedCopyIsKept()
+        {
+            var r = Typical(); var e = Make(r);
+            e.StepHook = s => { if (s == "backup-saved") throw new IOException("disk went away"); };
+            Exception ex = null;
+            try { e.Enable(null); } catch (Exception x) { ex = x; }
+            Assert.NotNull(ex);
+            var copy = e.VerifiedSavedCopy();
+            Assert.NotNull(copy);
+            Assert.Contains("found and checked", Engine.StoppedMessage(true, ex.Message, copy));
+        }
+}
 }

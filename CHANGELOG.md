@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.2
+Final release: two small fixes from the final independent review. Nothing about how you use it has changed.
+- If turning Registration Mode on or off stops with an unexpected error, the message no longer says your original
+  settings are saved unless a saved copy was found and checked afterwards (the error can happen before anything is
+  saved). It now tells you to close the tool, open it again and check what it says, and not to assume Registration
+  Mode was turned on (or that your settings were put back).
+- A version 1 saved file can't contain an account ID (SID) whatever order its lines are in. Before, a damaged file
+  with the account ID above the version line got past that check. Such a file is now refused and nothing is changed.
+  Genuine version 1 and version 2 files, including version 2 files from 1.2.0 without an account ID, still work.
+- The README now explains that saved copies from older versions have no account ID, so they can't be checked
+  against your Windows account the way newer ones are.
+
 ## 1.2.1
 Fixes from a second independent review.
 - A saved copy left by the old test builds ("TMUF Registration Mode") is moved in when first needed. If it can't be moved (for example an antivirus scan has it open), the tool now says so, shows where the file is and what to do, and won't turn Registration Mode on or off until it's sorted. Before, it carried on as if there was no saved copy, which could have saved already-changed settings as your "originals". The old file is never changed.

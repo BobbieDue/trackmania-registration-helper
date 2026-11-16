@@ -101,6 +101,26 @@ namespace Tmrh.Core
                 && now[2].AsDWord.HasValue && (now[2].AsDWord.Value & Settings.PublisherNoRevocationBit) != 0;
         }
 
+        /// <summary>The saved copy, only if it can be read and passes every check; otherwise null. Never throws.</summary>
+        public Backup VerifiedSavedCopy()
+        {
+            try { var b = store.Load(); return b != null && b.Stage != Stage.Restored ? b : null; }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>1.2.2: what to tell the user when Enable or Disable stopped with an unexpected error. It only says a
+        /// saved copy exists when one was found and checked afterwards (the error can happen before anything is saved).</summary>
+        public static string StoppedMessage(bool enable, string error, Backup verifiedCopy)
+        {
+            var m = (enable ? "Turning Registration Mode on" : "Restoring your settings") + " stopped with an error: " + error + "\n\n";
+            m += verifiedCopy != null
+                ? "A saved copy of your original settings was found and checked, so they are still kept. "
+                : "No saved copy of your original settings could be confirmed. ";
+            m += "Close this tool, open it again and check what it says before doing anything else. ";
+            m += enable ? "Don't assume Registration Mode was turned on." : "Don't assume your settings were put back.";
+            return m;
+        }
+
         public Status GetStatus()
         {
             var s = new Status { Tls13Available = Tls13Available, Managed = Settings.Managed(reg) };

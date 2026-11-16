@@ -54,8 +54,11 @@ less protected against fake or withdrawn certificates. Turn it OFF as soon as yo
 - **Asks before overwriting your changes:** if one of the three settings changed while Registration Mode was on,
   Disable shows what changed and asks before putting your originals back. Saying no changes nothing.
 - **One copy at a time:** opening it a second time brings the open window forward.
-- **Your account only, in the file too:** new saved copies record your Windows account's ID (SID), and a copy from a
-  different account is refused. The account *name* stored alongside is just a label, since names can change.
+- **Your account only, in the file too:** saved copies made by version 1.2.1 or later record your Windows account's ID
+  (SID), and a copy from a different account is refused. The account *name* stored alongside is just a label, since
+  names can change. Saved copies made by older versions (1.2.0 and the test builds) have no SID, so they can't be
+  checked against your account in the same way: they're still accepted and still checked in every other way, but
+  they don't get this account check.
 - **Older test builds:** a saved copy left by "TMUF Registration Mode" is moved in when first needed. If it can't be
   moved, the tool says where it is and changes nothing until that's sorted.
 - **Respects policies:** if a work or school policy controls the TLS or server revocation settings, it says so and changes nothing.

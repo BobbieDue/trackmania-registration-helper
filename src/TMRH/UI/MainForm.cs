@@ -216,8 +216,8 @@ namespace Tmrh.UI
             }
             catch (Exception ex)
             {
-                r = Result.Fail((enable ? "Turning Registration Mode on" : "Restoring your settings") + " stopped with an error: " + ex.Message +
-                    "\n\nYour original settings are saved. Open this tool again or click Disable to put them back.");
+                var copy = await Task.Run(() => engine.VerifiedSavedCopy());   // 1.2.2: only claim a saved copy that really exists
+                r = Result.Fail(Engine.StoppedMessage(enable, ex.Message, copy));
             }
             busy = false; UseWaitCursor = false;
             if (!enable && r.NeedsConfirmation.Count > 0)

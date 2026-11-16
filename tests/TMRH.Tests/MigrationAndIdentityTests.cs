@@ -175,5 +175,48 @@ namespace Tmrh.Tests
             File.WriteAllText(Store().FilePath, V1TwoEntries().Replace("user=PC\\player\r\n", "user=PC\\player\r\nsid=" + Me + "\r\n"), new UTF8Encoding(false));
             Assert.Throws<InvalidDataException>(() => Store().Load());
         }
-    }
+    
+        // ---------------------------------------------------------------- 1.2.2: version and account checked after every line
+
+        static string V1SidFirst(string sid) { return "sid=" + sid + "\r\nversion=1\r\nstage=Applied\r\ncreated=2026-01-01T00:00:00.0000000Z\r\nuser=PC\\player\r\n" + Val(IS, "SecureProtocols", 0xA80) + "\r\n" + Val(IS, "CertificateRevocation", 1) + "\r\nend=1\r\n"; }
+
+        [Fact]
+        public void Version1FileWithAccountBeforeVersionIsRejectedWithoutRegistryWrites()
+        {
+            Directory.CreateDirectory(NewDir);
+            File.WriteAllText(Store().FilePath, V1SidFirst(Me), new UTF8Encoding(false));
+            var bytes = File.ReadAllBytes(Store().FilePath);
+            var bad = new System.Collections.Generic.List<string>();
+            Assert.Null(BackupStore.Parse(bytes, bad));
+            Assert.Contains(bad, x => x.Contains("Version 1 files don't have an account ID"));
+            Assert.Throws<InvalidDataException>(() => Store().Load());
+            var r = RegistrationOn(); var before = r.Copy(); var e = Make(r, Store());
+            Assert.Equal(Mode.BadBackup, e.GetStatus().Mode);
+            Assert.False(e.Disable(null).Ok);
+            Assert.False(e.Enable(null).Ok);
+            Assert.Equal(0, r.Writes);
+            foreach (var k in before.Keys) Assert.True(before[k].SameAs(r.Values[k]), k);
+            Assert.Equal(bytes, File.ReadAllBytes(Store().FilePath));   // kept as it was
+        }
+
+        [Fact]
+        public void Version2FileWithAccountBeforeVersionStillLoads()
+        {
+            Directory.CreateDirectory(NewDir);
+            File.WriteAllText(Store().FilePath, "sid=" + Me + "\r\n" + V2(""), new UTF8Encoding(false));
+            Assert.Equal(Me, Store().Load().Sid);
+        }
+
+        [Fact]
+        public void LegacyFilesWithoutAccountStillLoad()
+        {
+            Directory.CreateDirectory(NewDir);
+            File.WriteAllText(Store().FilePath, V1TwoEntries(), new UTF8Encoding(false));
+            Assert.Equal(1, Store().Load().Version);
+            File.WriteAllText(Store().FilePath, V2(""), new UTF8Encoding(false));   // a v1.2.0 version 2 file: no account ID
+            var b = Store().Load();
+            Assert.Equal(2, b.Version);
+            Assert.Null(b.Sid);
+        }
+}
 }
